@@ -1,101 +1,107 @@
-import Image from "next/image";
+'use client'
 
-export default function Home() {
+import { useState } from 'react'
+import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
+import { Textarea } from "@/components/ui/textarea"
+import { Label } from "@/components/ui/label"
+import { Alert, AlertDescription } from "@/components/ui/alert"
+import { CheckCircle2 } from "lucide-react"
+import { sendSms } from './sendSms'
+
+export default function MessageForm() {
+  const [from, setFrom] = useState('')
+  const [phoneNumber, setPhoneNumber] = useState('')
+  const [message, setMessage] = useState('')
+  const [isSubmitted, setIsSubmitted] = useState(false)
+  const [error, setError] = useState('')
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault()
+    
+    // Reset previous submission state
+    setIsSubmitted(false)
+    setError('')
+
+    // Basic form validation
+    if (!from || !phoneNumber || !message) {
+      setError('Please fill in all fields.')
+      return
+    }
+
+    if (!/^[a-zA-Z0-9]+$/.test(from)) {
+      setError('From field should only contain alphanumeric characters.')
+      return
+    }
+
+    if (!/^\+46\d{9,11}$/.test(phoneNumber)) {
+      setError('Please enter a valid Swedish phone number (starting with +46 followed by 9-11 digits).')
+      return
+    }
+
+    try {
+      sendSms({ from, phoneNumber, message })
+      setIsSubmitted(true)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to send message')
+    }
+
+    // Here you would typically send the message data to a server
+    console.log('Message sent:', { from, phoneNumber, message })
+  }
+
   return (
-    <div className="grid grid-rows-[20px_1fr_20px] items-center justify-items-center min-h-screen p-8 pb-20 gap-16 sm:p-20 font-[family-name:var(--font-geist-sans)]">
-      <main className="flex flex-col gap-8 row-start-2 items-center sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={180}
-          height={38}
-          priority
-        />
-        <ol className="list-inside list-decimal text-sm text-center sm:text-left font-[family-name:var(--font-geist-mono)]">
-          <li className="mb-2">
-            Get started by editing{" "}
-            <code className="bg-black/[.05] dark:bg-white/[.06] px-1 py-0.5 rounded font-semibold">
-              src/app/page.tsx
-            </code>
-            .
-          </li>
-          <li>Save and see your changes instantly.</li>
-        </ol>
+    <div className="max-w-md mx-auto mt-8 p-6 bg-white rounded-lg shadow-md">
+      <h1 className="text-2xl font-bold mb-6">Send a Message</h1>
 
-        <div className="flex gap-4 items-center flex-col sm:flex-row">
-          <a
-            className="rounded-full border border-solid border-transparent transition-colors flex items-center justify-center bg-foreground text-background gap-2 hover:bg-[#383838] dark:hover:bg-[#ccc] text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={20}
-              height={20}
-            />
-            Deploy now
-          </a>
-          <a
-            className="rounded-full border border-solid border-black/[.08] dark:border-white/[.145] transition-colors flex items-center justify-center hover:bg-[#f2f2f2] dark:hover:bg-[#1a1a1a] hover:border-transparent text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 sm:min-w-44"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Read our docs
-          </a>
+      <form onSubmit={handleSubmit} className="space-y-4">
+        <div className="space-y-2">
+          <Label htmlFor="from">From (Alphanumeric)</Label>
+          <Input 
+            type="text" 
+            id="from" 
+            value={from} 
+            onChange={(e) => setFrom(e.target.value)}
+            placeholder="Your name" 
+          />
         </div>
-      </main>
-      <footer className="row-start-3 flex gap-6 flex-wrap items-center justify-center">
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/file.svg"
-            alt="File icon"
-            width={16}
-            height={16}
+
+        <div className="space-y-2">
+          <Label htmlFor="phoneNumber">Phone Number</Label>
+          <Input 
+            type="tel" 
+            id="phoneNumber" 
+            value={phoneNumber} 
+            onChange={(e) => setPhoneNumber(e.target.value)}
+            placeholder="1234567890" 
           />
-          Learn
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/window.svg"
-            alt="Window icon"
-            width={16}
-            height={16}
+        </div>
+
+        <div className="space-y-2">
+          <Label htmlFor="message">Message</Label>
+          <Textarea 
+            id="message" 
+            value={message} 
+            onChange={(e) => setMessage(e.target.value)}
+            placeholder="Type your message here" 
           />
-          Examples
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/globe.svg"
-            alt="Globe icon"
-            width={16}
-            height={16}
-          />
-          Go to nextjs.org →
-        </a>
-      </footer>
+        </div>
+
+        <Button type="submit" className="w-full">Send Message</Button>
+      </form>
+
+      {error && (
+        <Alert variant="destructive" className="mt-4">
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
+      )}
+
+      {isSubmitted && (
+        <Alert variant="default" className="mt-4">
+          <CheckCircle2 className="h-4 w-4" />
+          <AlertDescription>Message sent successfully!</AlertDescription>
+        </Alert>
+      )}
     </div>
-  );
+  )
 }
