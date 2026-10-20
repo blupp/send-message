@@ -1,52 +1,71 @@
 'use server'
 
-import {
-  type MessageInput,
-  ValidationError,
-  validateMessageInput,
-} from '@/lib/validation'
+import { headers } from 'next/headers'
+import { createHash } from 'node:crypto'
+import { getElksCredentials } from '@/lib/env'
+import { validateMessageInput, type MessageInput } from '@/lib/validation'
+import { guardSend } from '@/lib/rateLimit'
 
 // How long we are willing to wait for 46elks before bailing out.
 const REQUEST_TIMEOUT_MS = 15_000
 
-// 46elks returns a structured error body on failure; shape the bits we care about.
+// 46elks returns a structured error body on failure; the fields we care about.
 interface ElksErrorBody {
   error?: string
-  error_code?: number
   error_description?: string
-  request_url?: string
+}
+
+async function getCallerIp(): Promise<string> {
+  const h = await headers()
+  const forwarded = h.get('x-forwarded-for')
+  const ip = forwarded?.split(',')[0]?.trim() ?? h.get('x-real-ip') ?? 'unknown'
+  return ip
+}
+
+// Content fingerprint so identical sends within a window are treated as one.
+function contentKey(from: string, phoneNumber: string, message: string): string {
+  return createHash('sha256')
+    .update(`${from}\u0000${phoneNumber}\u0000${message}`)
+    .digest('hex')
 }
 
 /**
  * Send an SMS through 46elks' a1/sms endpoint.
  *
- * This is a Next.js Server Action: it runs exclusively on the server, which is
- * why the 46elks credentials never reach the browser.
+ * A Next.js Server Action: it runs only on the server, so the 46elks
+ * credentials never reach the browser. Guards, in order:
+ *   1. authoritative input validation (client check is only a fast-fail)
+ *   2. per-caller rate limit + duplicate suppression
+ *   3. credential check (fails loud on misconfigured deploys)
+ *   4. network request, with a timeout so the UI is never left hanging
  *
- * @throws {ValidationError} when input is invalid (mapped to a user message).
- * @throws {Error} when the API call fails or times out.
+ * @throws {Error} with a user-facing Swedish message on any failure.
  */
 export async function sendSms(input: MessageInput) {
-  const username = process.env.ELKS_API_USERNAME
-  const password = process.env.ELKS_API_PASSWORD
+  const ip = await getCallerIp()
 
-  if (!username || !password) {
-    console.error('Missing ELKS_API_USERNAME / ELKS_API_PASSWORD environment variables')
-    throw new Error('Tjänsten är inte konfigurerad. Sakna ELKS-API-credentials.')
-  }
-
-  const { from, phoneNumber, message } = input
-
-  // Authoritative validation — the client-side check is only a fast fail.
+  // 1. Authoritative validation — normalize before building the dedup key.
+  let validated: MessageInput
   try {
-    validateMessageInput({ from, phoneNumber, message })
+    validated = validateMessageInput(input)
   } catch (err) {
-    // Re-throw so the calling action can distinguish validation from API errors.
-    if (err instanceof ValidationError) throw err
-    throw new ValidationError('Ogiltiga uppgifter i formuläret.')
+    if (err instanceof Error) throw err
+    throw new Error('Ogiltiga uppgifter i formuläret.')
   }
 
-  // Abort the request if 46elks takes forever, so the UI is never left hanging.
+  // 2. Per-caller rate limit and duplicate suppression.
+  const guard = guardSend(
+    ip,
+    contentKey(validated.from, validated.phoneNumber, validated.message),
+  )
+  if (!guard.ok) {
+    throw new Error(guard.message)
+  }
+
+  // 3. Credentials.
+  const { username, password } = getElksCredentials()
+
+  // 4. Call 46elks with a timeout.
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS)
 
@@ -58,25 +77,25 @@ export async function sendSms(input: MessageInput) {
         Authorization: 'Basic ' + Buffer.from(`${username}:${password}`).toString('base64'),
       },
       body: new URLSearchParams({
-        from,
-        to: phoneNumber,
-        message,
+        from: validated.from,
+        to: validated.phoneNumber,
+        message: validated.message,
       }),
       signal: controller.signal,
     })
 
     // 46elks returns text on some error shapes; parse defensively.
     const text = await response.text()
-    let data: Record<string, unknown> | ElksErrorBody = {}
+    let data: Record<string, unknown> = {}
     try {
       data = JSON.parse(text) as Record<string, unknown>
     } catch {
-      // Not JSON — leave data empty and fall back to the status message.
+      // Not JSON — keep data empty and fall back to the status message below.
     }
 
     if (!response.ok) {
-      const body = data as ElksErrorBody
-      console.error('46elks request failed:', {
+      const body = data as unknown as ElksErrorBody
+      console.error('46elks request failed', {
         status: response.status,
         statusText: response.statusText,
         body,
@@ -91,13 +110,12 @@ export async function sendSms(input: MessageInput) {
     console.info('SMS accepted', { status: response.status, ref: (data as { ref?: string })?.ref })
     return data
   } catch (error) {
-    // Preserve a ValidationError so the caller can show it verbatim.
-    if (error instanceof ValidationError) throw error
     if (error instanceof Error && error.name === 'AbortError') {
-      throw new Error('Tidsgränsen för anropet uppstod. Försök igen.')
+      throw new Error('Tidsgränsen för anropet uppgick. Försök igen.')
     }
-    console.error('Unexpected error sending SMS', error)
-    throw new Error('Ett oberoende fel uppstod vid skick. Försök igen.')
+    // Re-throw unexpected errors without swallowing their cause.
+    console.error('sendSms failed:', error)
+    throw error instanceof Error ? error : new Error('Ett oberoende fel uppstod. Försök igen.')
   } finally {
     clearTimeout(timer)
   }
